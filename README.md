@@ -14,3 +14,4 @@ $ python gamepadinfo.py
 
 ## Screenshot
 
+![Screenshot](/screenshot.png)
