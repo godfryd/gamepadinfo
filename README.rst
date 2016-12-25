@@ -1,3 +1,6 @@
+.. image:: https://api.travis-ci.org/godfryd/gamepadinfo.svg?branch=master
+   :target: https://travis-ci.org/godfryd/gamepadinfo
+
 .. image:: http://img.shields.io/pypi/v/gamepadinfo.svg
     :target: https://pypi.python.org/pypi/gamepadinfo
 
@@ -9,9 +12,6 @@
 
 .. image:: http://img.shields.io/pypi/pyversions/gamepadinfo.svg
     :target: https://pypi.python.org/pypi/gamepadinfo
-
-.. image:: https://api.travis-ci.org/godfryd/gamepadinfo.svg?branch=master
-   :target: https://travis-ci.org/godfryd/gamepadinfo
 
 gamepadinfo
 ===========
