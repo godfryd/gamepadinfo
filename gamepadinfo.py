@@ -598,8 +598,8 @@ class ConsoleUI(object):
             self.view.footer = urwid.AttrWrap(urwid.Text(self.footer_texts[self.focus_pane]), 'foot')
         elif k == 'f2':
             self.switch_bottom_elem()
-        #else:
-        #    self.log(k)
+        # else:
+        #     self.log(k)
 
     def log(self, text):
         entry = '%s: %s' % (datetime.datetime.now(), text)
