@@ -38,8 +38,9 @@ If `gamepadinfo` is being installed via pip then dependencies will be installed 
 Installing and Running
 ----------------------
 
-From source repository
-~~~~~~~~~~~~~~~~~~~~~~
+Let's install and run.
+
+*From source repository*
 
 Installing and running from source code repository goes as follows::
 
@@ -47,8 +48,7 @@ Installing and running from source code repository goes as follows::
    $ cd gamepadinfo/
    $ ./gamepadinfo.py
 
-Via pip
-~~~~~~~
+*Via pip*
 
 Installing and running using pip goes as follows::
 
@@ -59,7 +59,8 @@ Video & Screenshot
 ------------------
 
 Short video presentation:
-https://asciinema.org/a/5b5h1d850xk8wflv7v9db9qgb
+
+   https://asciinema.org/a/5b5h1d850xk8wflv7v9db9qgb
 
 Screenshot:
 
