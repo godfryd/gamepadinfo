@@ -13,7 +13,7 @@ with open(path.join(here, 'README.rst'), encoding='utf-8') as f:
 
 setup(
     name='gamepadinfo',
-    version='0.9',
+    version='0.9.1',
 
     description='Detect gamepads and show reads its state on Linux',
     long_description=long_description,
