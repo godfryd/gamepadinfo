@@ -49,7 +49,7 @@ setup(
     # this:
     py_modules=["gamepadinfo"],
 
-    install_requires=['urwid', 'pyudev', 'evdev', 'pysdl2'],
+    install_requires=['urwid', 'pyudev', 'evdev', 'PySDL2'],
 
     # To provide executable scripts, use entry points in preference to the
     # "scripts" keyword. Entry points provide cross-platform support and allow

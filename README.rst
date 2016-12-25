@@ -1,7 +1,7 @@
 gamepadinfo
 ===========
 
-This is a Python script that detects gamepads and show their state on
+This is a Python script that detects gamepads and shows their state on
 Linux.
 
 Dependencies

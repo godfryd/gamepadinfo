@@ -1,0 +1,18 @@
+language: python
+
+python:
+  - "3.5"
+  - "3.6"
+
+env:
+  - TOXENV=py35
+  - TOXENV=py36
+
+install:
+  sudo apt-get install python3.6
+  pip install tox
+
+script: tox
+
+notifications:
+  email: false

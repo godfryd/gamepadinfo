@@ -1,23 +1,20 @@
 #!/usr/bin/python3
-
+"""Detect gamepads and show their state on Linux."""
 import os
 import datetime
 import queue
 import struct
 import glob
-import os
 import ctypes
 import fcntl
 import traceback
 import array
-import sys
 import asyncio
 import select
 
 import urwid
 import pyudev
 import evdev
-#import pygame
 import sdl2
 
 JS_EVENT_BUTTON = 0x01  # button pressed/released
@@ -25,6 +22,7 @@ JS_EVENT_AXIS = 0x02  # joystick moved
 JS_EVENT_INIT = 0x80  # initial state of device
 
 
+# pylint: disable=no-member
 GAMEPAD_BUTTONS = (evdev.ecodes.BTN_A,
                    evdev.ecodes.BTN_B,
                    evdev.ecodes.BTN_X,
@@ -50,13 +48,14 @@ GAMEPAD_BUTTONS = (evdev.ecodes.BTN_A,
 
 BUTTON_NAMES = {v: k[4:] for k, v in evdev.ecodes.ecodes.items()}
 
-input_devices = {}
+INPUT_DEVICES = {}
 
 
 def scan_evdev_gamepads():
+    """Scan for evdev gamepads."""
     # remove old evdev devices
-    global input_devices
-    input_devices = {fn: input_devices[fn] for fn in input_devices if not fn.startswith('/dev/input/event')}
+    global INPUT_DEVICES  # pylint: disable=global-statement
+    INPUT_DEVICES = {fn: INPUT_DEVICES[fn] for fn in INPUT_DEVICES if not fn.startswith('/dev/input/event')}
 
     devs = []
     for fn in evdev.list_devices():
@@ -77,17 +76,19 @@ def scan_evdev_gamepads():
             if any(k in keys for k in GAMEPAD_BUTTONS):
                 devs.append(d)
                 fn = d.fn
-                #print 'EVDEV', d.name, fn
-                if fn not in input_devices:
-                    input_devices[fn] = {}
-                input_devices[fn]['evdev'] = d
+                # print 'EVDEV', d.name, fn
+                if fn not in INPUT_DEVICES:
+                    INPUT_DEVICES[fn] = {}
+                INPUT_DEVICES[fn]['evdev'] = d
 
-def present_evdev_gamepad(d):
+
+def present_evdev_gamepad(dev):
+    """Generate description of evdev gamepads for urwid."""
     text = [('emph', "EVDEV:",)]
-    caps = d.capabilities()
-    text.append("   name: '%s'" % d.name)
-    text.append('   file: %s' % d.fn)
-    text.append('   phys: %s' % d.phys)
+    caps = dev.capabilities()
+    text.append("   name: '%s'" % dev.name)
+    text.append('   file: %s' % dev.fn)
+    text.append('   phys: %s' % dev.phys)
     if evdev.ecodes.EV_ABS in caps:
         axes_text = '   axes: '
         axes = caps[evdev.ecodes.EV_ABS]
@@ -104,30 +105,31 @@ def present_evdev_gamepad(d):
                 keys_text.append(BUTTON_NAMES[k])
             keys_text.append(', ')
         text.append(keys_text[:-1])
-    text.append('   %s' % str(d.info))
-    #caps = d.capabilities(verbose=True)
-    #text.append(str(caps))
-    #caps = d.capabilities()
-    #text.append(str(caps))
+    text.append('   %s' % str(dev.info))
+    # caps = dev.capabilities(verbose=True)
+    # text.append(str(caps))
+    # caps = dev.capabilities()
+    # text.append(str(caps))
+
     # TODO: add SDL2 id
     return text
 
 
 def scan_jsio_gamepads():
+    """Scan for jsio gamepads."""
     # remove old js devices
-    global input_devices
-    input_devices = {fn: input_devices[fn] for fn in input_devices if not fn.startswith('/dev/input/js')}
+    global INPUT_DEVICES  # pylint: disable=global-statement
+    INPUT_DEVICES = {fn: INPUT_DEVICES[fn] for fn in INPUT_DEVICES if not fn.startswith('/dev/input/js')}
 
     syspaths = glob.glob("/dev/input/js*")
 
-    #ioctls
+    # ioctls, pylint: disable=invalid-name
     JSIOCGVERSION = 0x80046a01
     JSIOCGAXES = 0x80016a11
     JSIOCGBUTTONS = 0x80016a12
     JSIOCGNAME = 0x81006a13
 
     for fn in syspaths:
-        #print path
         data = dict(path=fn)
         try:
             with open(fn, "r") as jsfile:
@@ -139,36 +141,32 @@ def scan_jsio_gamepads():
                     print("Failed to read number of axes")
                 else:
                     data['axes'] = val.value
-                    #print 'axes', data['axes']
 
                 if fcntl.ioctl(jsfile.fileno(), JSIOCGBUTTONS, val) != 0:
                     print("Failed to read number of axes")
                 else:
                     data['buttons'] = val.value
-                    #print 'buttons', data['buttons']
 
                 if fcntl.ioctl(jsfile.fileno(), JSIOCGVERSION, val) != 0:
                     print("Failed to read version")
                 else:
                     data['version'] = '0x%x' % val.value
-                    #print 'version', data['version']
 
                 buf = array.array('b', [0] * 64)
                 fcntl.ioctl(jsfile.fileno(), JSIOCGNAME + (0x10000 * len(buf)), buf)
-                #data['name'] = buf.tostring() # .replace('\0', '')
                 data['name'] = str(buf.tobytes(), 'utf-8').rstrip("\x00")
-                #print 'name', data['name']
 
-            if fn not in input_devices:
-                input_devices[fn] = {}
-            input_devices[fn]['jsio'] = data
+            if fn not in INPUT_DEVICES:
+                INPUT_DEVICES[fn] = {}
+            INPUT_DEVICES[fn]['jsio'] = data
         except PermissionError:
             pass  # TODO: show errors on some status bar or logs panel
         except:
             print(traceback.format_exc())
-            #pass
+
 
 def present_jsio_gamepad(data):
+    """Generate description of jsio gamepads for urwid."""
     text = [('emph', "JSIO:",)]
     for k, v in data.items():
         if k.lower() == 'name':
@@ -178,6 +176,8 @@ def present_jsio_gamepad(data):
 
 
 def scan_pygame_gamepads():
+    """Scan for pygame gamepads."""
+    import pygame  # pylint: disable=import-error
     pygame.init()
     pygame.joystick.init()
     for i in range(pygame.joystick.get_count()):
@@ -185,59 +185,63 @@ def scan_pygame_gamepads():
         j.init()
         name = j.get_name().strip()
 
-        for fn, d in input_devices.items():
+        for d in INPUT_DEVICES.values():
             if 'jsio' not in d:
                 continue
             n = d['jsio']['name'].strip()
             if n.startswith(name):
                 d['pygame'] = j
 
+
 def present_pygame_gamepad(data):
+    """Generate description of pygame gamepads for urwid."""
     text = [('emph', "PyGame:",)]
     text.append('   name: %s' % data.get_name())
     text.append('   id: %s' % data.get_id())
     text.append('   numaxes: %s' % data.get_numaxes())
     text.append('   numballs: %s' % data.get_numballs())
     text.append('   numbuttons: %s' % data.get_numbuttons())
-    #print '\tnumhats: %s' % data.get_numhats()
+    # print '\tnumhats: %s' % data.get_numhats()
     return text
 
 
 def scan_sdl2_gamepads():
+    """Scan for sdl2 gamepads."""
     sdl2.SDL_Init(sdl2.SDL_INIT_JOYSTICK | sdl2.SDL_INIT_GAMECONTROLLER)
     num = sdl2.joystick.SDL_NumJoysticks()
-    #print num
     for i in range(num):
         j = sdl2.joystick.SDL_JoystickOpen(i)
         name = str(sdl2.SDL_JoystickName(j).strip(), 'utf-8')
-        for fn, d in input_devices.items():
+        for d in INPUT_DEVICES.values():
             if 'evdev' not in d:
                 continue
             n = d['evdev'].name
             if n.startswith(name):
                 d['sdl2'] = j
 
-        #guid = sdl2.joystick.SDL_JoystickGetGUID(js)
-        #my_guid = SDL_JoystickGetGUIDString(guid)
+        # guid = sdl2.joystick.SDL_JoystickGetGUID(js)
+        # my_guid = SDL_JoystickGetGUIDString(guid)
 
-def SDL_JoystickGetGUIDString(guid):
+
+def sdl_joystickgetguidstring(guid):
+    """Get SDL2 GUID from low level data."""
     s = ''
     for g in guid.data:
         s += "{:x}".format(g >> 4)
         s += "{:x}".format(g & 0x0F)
     return s
 
+
 def present_sdl2_gamepad(j):
+    """Generate description of sdl2 gamepads for urwid."""
     text = [('emph', "SDL2:",)]
-    text.append('   guid: %s' % SDL_JoystickGetGUIDString(sdl2.joystick.SDL_JoystickGetGUID(j)))
+    text.append('   guid: %s' % sdl_joystickgetguidstring(sdl2.joystick.SDL_JoystickGetGUID(j)))
     text.append('   id: %s' % sdl2.joystick.SDL_JoystickInstanceID(j))
     text.append('   NumAxes: %s' % sdl2.joystick.SDL_JoystickNumAxes(j))
     text.append('   NumBalls: %s' % sdl2.joystick.SDL_JoystickNumBalls(j))
     text.append('   NumButtons: %s' % sdl2.joystick.SDL_JoystickNumButtons(j))
     text.append('   NumHats: %s' % sdl2.joystick.SDL_JoystickNumHats(j))
     return text
-
-
 
 
 class DeviceTreeWidget(urwid.TreeWidget):
@@ -271,6 +275,7 @@ class DeviceParentNode(urwid.ParentNode):
             childclass = DeviceNode
         return childclass(childdata, parent=self, key=key, depth=childdepth)
 
+
 class DevicesTree(urwid.TreeListBox):
     def __init__(self, *args, **kwargs):
         self.node_visited_cb = kwargs.pop('node_visited_cb')
@@ -280,7 +285,6 @@ class DevicesTree(urwid.TreeListBox):
         super(DevicesTree, self).change_focus(*args, **kwargs)
         _, node = self.get_focus()
         data = node.get_value()
-        #print data
         self.node_visited_cb(data['dev'])
 
 
@@ -296,8 +300,8 @@ class DeviceBox(urwid.LineBox):
         text = []
 
         if device:
-            if 'DEVNAME' in device and device['DEVNAME'] in input_devices:
-                data = input_devices[device['DEVNAME']]
+            if 'DEVNAME' in device and device['DEVNAME'] in INPUT_DEVICES:
+                data = INPUT_DEVICES[device['DEVNAME']]
                 if 'sdl2' in data:
                     text += present_sdl2_gamepad(data['sdl2'])
                 if 'evdev' in data:
@@ -320,14 +324,15 @@ class DeviceBox(urwid.LineBox):
         if elems:
             self.lines_box.focus_position = 0
 
-    def make_focus(self):
-        self.set_title(device.sys_path)
-
 
 class Udev(object):
     def __init__(self, ui_queue):
         self.ui_queue = ui_queue
         self.ctx = pyudev.Context()
+
+        self.ui_wakeup_fd = None
+        self.monitor = None
+        self.observer = None
 
     def send_event_to_ui_thread(self, action, device):
         self.ui_queue.put((action, device))
@@ -346,10 +351,7 @@ class Udev(object):
 
         for device in self.ctx.list_devices():
             devs[device.sys_path] = device
-            if ('ID_INPUT_JOYSTICK' in device and device['ID_INPUT_JOYSTICK']) or ('DEVNAME' in device and device['DEVNAME'] in input_devices):
-                #print device
-                #for k, v in device.iteritems():
-                #    print '    ', k, v
+            if ('ID_INPUT_JOYSTICK' in device and device['ID_INPUT_JOYSTICK']) or ('DEVNAME' in device and device['DEVNAME'] in INPUT_DEVICES):
                 in_joystick_chain.append(device.sys_path)
                 for anc in self._find_parents(device.parent):
                     in_joystick_chain.append(anc.sys_path)
@@ -379,7 +381,7 @@ class Udev(object):
         scan_jsio_gamepads()
         # scan_pygame_gamepads() # TODO: missing pygame for python3
         scan_sdl2_gamepads()
-        devs, roots, in_joystick_chain = self.get_devs()
+        _, roots, in_joystick_chain = self.get_devs()
         result = {"name": "root", "dev": None, "children": []}
         for r in roots:
             st = self.get_subtree(r, in_joystick_chain, None)
@@ -427,7 +429,7 @@ class GamePadStateBox(urwid.Text):
 
     def _update_jsio_state(self, device, event):
         if event['type'] == JS_EVENT_BUTTON:
-            print("AAAAAAA " + str(event))
+            print("AAAAAAA " + str(event) + str(device))
             if event['value'] == 1:
                 self.buttons[event['number']] = event['value']
             else:
@@ -454,13 +456,14 @@ class MyAsyncioEventLoop(urwid.AsyncioEventLoop):
 
 
 class ConsoleUI(object):
+    # pylint: disable=too-many-instance-attributes
     palette = [
         ('body', 'black', 'light gray'),
         ('normal', 'light gray', ''),
         ('focus', 'white', 'black'),
         ('head', 'yellow', 'black', 'standout'),
         ('foot', 'light gray', 'black'),
-        ('key', 'light cyan', 'black','underline'),
+        ('key', 'light cyan', 'black', 'underline'),
         ('title', 'white', 'black', 'bold'),
         ('flag', 'dark gray', 'light gray'),
         ('error', 'dark red', 'light gray'),
@@ -504,6 +507,7 @@ class ConsoleUI(object):
         ('key', "F2"), ":Switch Log Box/GamePad State  ",
         ('key', "Q"), ":Quit"
     ]]
+
     def __init__(self):
         self.udev_queue = queue.Queue()
         self.udev = Udev(self.udev_queue)
@@ -534,7 +538,7 @@ class ConsoleUI(object):
                                 self.bottom_elems[self.bottom_elem_idx]])
         self.view = urwid.Frame(
             self.pile,
-            header=urwid.AttrWrap(urwid.Text(" -= GamePad Info =-"), 'head' ),
+            header=urwid.AttrWrap(urwid.Text(" -= GamePad Info =-"), 'head'),
             footer=urwid.AttrWrap(urwid.Text(self.footer_texts[0]), 'foot'))
 
         self.aloop = asyncio.get_event_loop()
@@ -550,7 +554,9 @@ class ConsoleUI(object):
         self.udev.setup_monitor(self.ui_wakeup_fd)
 
         self.evdev_events_handler_task = None
+        self.selected_evdev_device = None
         self.jsio_events_handler_task = None
+        self.selected_jsio_device = None
 
     def main(self):
         """Run the program."""
@@ -562,7 +568,7 @@ class ConsoleUI(object):
         self.pile.contents[1] = (self.bottom_elems[self.bottom_elem_idx], ('weight', 1))
 
     def unhandled_input(self, k):
-        if k in ('q','Q'):
+        if k in ('q', 'Q'):
             raise urwid.ExitMainLoop()
         elif k == 'tab':
             if self.focus_pane == 0:
@@ -608,9 +614,11 @@ class ConsoleUI(object):
 
     def async_evdev_read(self, device):
         future = asyncio.Future()
+
         def ready():
             self.aloop.remove_reader(device.fileno())
             future.set_result(device.read())
+
         self.aloop.add_reader(device.fileno(), ready)
         return future
 
@@ -626,6 +634,7 @@ class ConsoleUI(object):
     def async_jsio_read(self, device):
         future = asyncio.Future()
         data_format = 'LhBB'
+
         def ready():
             self.aloop.remove_reader(device['file'].fileno())
             events = []
@@ -635,11 +644,12 @@ class ConsoleUI(object):
                 event = dict(time=data[0], value=data[1], type=data[2] & ~JS_EVENT_INIT, number=data[3])
                 events.append(event)
             future.set_result(events)
+
         self.aloop.add_reader(device['file'].fileno(), ready)
         return future
 
     async def handle_jsio_events(self, device):
-        device['file'] = open(device['path'], 'rb', os.O_RDONLY|os.O_NDELAY)
+        device['file'] = open(device['path'], 'rb', os.O_RDONLY | os.O_NDELAY)
         while True:
             events = await self.async_jsio_read(device)
             for event in events:
@@ -663,8 +673,8 @@ class ConsoleUI(object):
             self.aloop.remove_reader(self.selected_jsio_device['file'].fileno())
             self.jsio_events_handler_task = None
 
-        if device and 'DEVNAME' in device and device['DEVNAME'] in input_devices:
-            data = input_devices[device['DEVNAME']]
+        if device and 'DEVNAME' in device and device['DEVNAME'] in INPUT_DEVICES:
+            data = INPUT_DEVICES[device['DEVNAME']]
             if 'evdev' in data:
                 self.selected_evdev_device = data['evdev']
                 self.log('started monitorig evdev %s' % self.selected_evdev_device)
@@ -679,5 +689,6 @@ def main():
     ui = ConsoleUI()
     ui.main()
 
-if __name__=="__main__":
+
+if __name__ == "__main__":
     main()
