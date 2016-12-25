@@ -428,6 +428,7 @@ class GamePadStateBox(urwid.Text):
         self.set_text(text)
 
     def _update_jsio_state(self, device, event):
+        # pylint: disable=unused-argument
         if event['type'] == JS_EVENT_BUTTON:
             if event['value'] == 1:
                 self.buttons[event['number']] = event['value']
