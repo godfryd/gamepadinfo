@@ -55,10 +55,13 @@ Installing and running using pip goes as follows::
    $ pip install gamepadinfo
    $ gamepadinfo
 
-Screenshot
-----------
+Video & Screenshot
+------------------
+
+Short video presentation:
+https://asciinema.org/a/5b5h1d850xk8wflv7v9db9qgb
+
+Screenshot:
 
 .. figure:: /screenshot.png
    :alt: Screenshot
-
-   Screenshot

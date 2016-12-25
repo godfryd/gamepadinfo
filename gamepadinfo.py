@@ -429,14 +429,21 @@ class GamePadStateBox(urwid.Text):
 
     def _update_jsio_state(self, device, event):
         if event['type'] == JS_EVENT_BUTTON:
-            print("AAAAAAA " + str(event) + str(device))
             if event['value'] == 1:
                 self.buttons[event['number']] = event['value']
             else:
                 if event['number'] in self.buttons:
                     del self.buttons[event['number']]
+        elif event['type'] == JS_EVENT_AXIS:
+            self.axes[event['number']] = event['value']
+
         buttons = [str(b) for b in self.buttons.keys()]
         text = "Buttons: %s\n" % ", ".join(buttons)
+
+        text += "Axes:\n"
+        for a, v in self.axes.items():
+            text += "  %s: %d\n" % (a, v)
+
         self.set_text(text)
 
 
@@ -452,7 +459,8 @@ class MyAsyncioEventLoop(urwid.AsyncioEventLoop):
             e = self._exc_info
             self._exc_info = None
             open('a.log', 'a').write(str(e)+'\n')
-            raise e[1]
+            if e[1]:
+                raise e[1]
 
 
 class ConsoleUI(object):
@@ -485,6 +493,7 @@ class ConsoleUI(object):
         ('key', "END"), ":Navigate Devices Tree and select device  ",
         ('key', "F1"), ":Help  ",
         ('key', "F2"), ":Switch Log Box/GamePad State  ",
+        ('key', "ESC"), ",",
         ('key', "Q"), ":Quit"
     ], [
         # focused dev box
@@ -495,6 +504,7 @@ class ConsoleUI(object):
         ('key', "PAGE DOWN"), ":Scroll Dev Box content  ",
         ('key', "F1"), ":Help  ",
         ('key', "F2"), ":Switch Log Box/GamePad State  ",
+        ('key', "ESC"), ",",
         ('key', "Q"), ":Quit"
     ], [
         # focused log box
@@ -505,6 +515,7 @@ class ConsoleUI(object):
         ('key', "PAGE DOWN"), ":Scroll Log Box content  ",
         ('key', "F1"), ":Help  ",
         ('key', "F2"), ":Switch Log Box/GamePad State  ",
+        ('key', "ESC"), ",",
         ('key', "Q"), ":Quit"
     ]]
 
@@ -568,7 +579,7 @@ class ConsoleUI(object):
         self.pile.contents[1] = (self.bottom_elems[self.bottom_elem_idx], ('weight', 1))
 
     def unhandled_input(self, k):
-        if k in ('q', 'Q'):
+        if k in ('q', 'Q', 'esc'):
             raise urwid.ExitMainLoop()
         elif k == 'tab':
             if self.focus_pane == 0:
@@ -587,6 +598,8 @@ class ConsoleUI(object):
             self.view.footer = urwid.AttrWrap(urwid.Text(self.footer_texts[self.focus_pane]), 'foot')
         elif k == 'f2':
             self.switch_bottom_elem()
+        #else:
+        #    self.log(k)
 
     def log(self, text):
         entry = '%s: %s' % (datetime.datetime.now(), text)
