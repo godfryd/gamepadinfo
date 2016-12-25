@@ -12,12 +12,17 @@ import traceback
 import array
 import sys
 import asyncio
+import select
 
 import urwid
 import pyudev
 import evdev
 #import pygame
 import sdl2
+
+JS_EVENT_BUTTON = 0x01  # button pressed/released
+JS_EVENT_AXIS = 0x02  # joystick moved
+JS_EVENT_INIT = 0x80  # initial state of device
 
 
 GAMEPAD_BUTTONS = (evdev.ecodes.BTN_A,
@@ -43,7 +48,7 @@ GAMEPAD_BUTTONS = (evdev.ecodes.BTN_A,
                    evdev.ecodes.BTN_THUMBL,
                    evdev.ecodes.BTN_THUMBR)
 
-BUTTON_NAMES = {v: k[4:].lower() for k, v in evdev.ecodes.ecodes.items()}
+BUTTON_NAMES = {v: k[4:] for k, v in evdev.ecodes.ecodes.items()}
 
 input_devices = {}
 
@@ -80,19 +85,30 @@ def scan_evdev_gamepads():
 def present_evdev_gamepad(d):
     text = [('emph', "EVDEV:",)]
     caps = d.capabilities()
-    text.append('   name: %s' % d.name)
+    text.append("   name: '%s'" % d.name)
     text.append('   file: %s' % d.fn)
     text.append('   phys: %s' % d.phys)
     if evdev.ecodes.EV_ABS in caps:
-        text.append('   abs')
+        axes_text = '   axes: '
+        axes = caps[evdev.ecodes.EV_ABS]
+        axes_text += ", ".join([evdev.ecodes.ABS[a[0]][4:] for a in axes])
+        text.append(axes_text)
     if evdev.ecodes.EV_KEY in caps:
-        keys_text = '   buttons: '
+        keys_text = []
+        keys_text.append('   buttons: ')
         keys = caps[evdev.ecodes.EV_KEY]
-        for k in GAMEPAD_BUTTONS:
-            if k in keys:
-                keys_text += BUTTON_NAMES[k] + ' '
-        text.append(keys_text)
+        for k in keys:
+            if k in GAMEPAD_BUTTONS:
+                keys_text.append(('key', BUTTON_NAMES[k]))
+            else:
+                keys_text.append(BUTTON_NAMES[k])
+            keys_text.append(', ')
+        text.append(keys_text[:-1])
     text.append('   %s' % str(d.info))
+    #caps = d.capabilities(verbose=True)
+    #text.append(str(caps))
+    #caps = d.capabilities()
+    #text.append(str(caps))
     # TODO: add SDL2 id
     return text
 
@@ -139,7 +155,8 @@ def scan_jsio_gamepads():
 
                 buf = array.array('b', [0] * 64)
                 fcntl.ioctl(jsfile.fileno(), JSIOCGNAME + (0x10000 * len(buf)), buf)
-                data['name'] = buf.tostring() # .replace('\0', '')
+                #data['name'] = buf.tostring() # .replace('\0', '')
+                data['name'] = str(buf.tobytes(), 'utf-8').rstrip("\x00")
                 #print 'name', data['name']
 
             if fn not in input_devices:
@@ -154,6 +171,8 @@ def scan_jsio_gamepads():
 def present_jsio_gamepad(data):
     text = [('emph', "JSIO:",)]
     for k, v in data.items():
+        if k.lower() == 'name':
+            v = "'%s'" % v
         text.append('   %s: %s' % (k.lower(), v))
     return text
 
@@ -190,7 +209,7 @@ def scan_sdl2_gamepads():
     #print num
     for i in range(num):
         j = sdl2.joystick.SDL_JoystickOpen(i)
-        name = str(sdl2.SDL_JoystickName(j).strip())
+        name = str(sdl2.SDL_JoystickName(j).strip(), 'utf-8')
         for fn, d in input_devices.items():
             if 'evdev' not in d:
                 continue
@@ -221,45 +240,44 @@ def present_sdl2_gamepad(j):
 
 
 
-class ExampleTreeWidget(urwid.TreeWidget):
+class DeviceTreeWidget(urwid.TreeWidget):
     """ Display widget for leaf nodes """
     def get_display_text(self):
         return self.get_node().get_value()['name']
 
 
-class ExampleNode(urwid.TreeNode):
+class DeviceNode(urwid.TreeNode):
     """ Data storage object for leaf nodes """
     def load_widget(self):
-        return ExampleTreeWidget(self)
+        return DeviceTreeWidget(self)
 
 
-class ExampleParentNode(urwid.ParentNode):
+class DeviceParentNode(urwid.ParentNode):
     """ Data storage object for interior/parent nodes """
     def load_widget(self):
-        return ExampleTreeWidget(self)
+        return DeviceTreeWidget(self)
 
     def load_child_keys(self):
         data = self.get_value()
         return list(range(len(data['children'])))
 
     def load_child_node(self, key):
-        """Return either an ExampleNode or ExampleParentNode"""
-        open('a.log', 'a').write('node\n')
+        """Return either an DeviceNode or DeviceParentNode"""
         childdata = self.get_value()['children'][key]
         childdepth = self.get_depth() + 1
         if 'children' in childdata:
-            childclass = ExampleParentNode
+            childclass = DeviceParentNode
         else:
-            childclass = ExampleNode
+            childclass = DeviceNode
         return childclass(childdata, parent=self, key=key, depth=childdepth)
 
-class MyTree(urwid.TreeListBox):
+class DevicesTree(urwid.TreeListBox):
     def __init__(self, *args, **kwargs):
         self.node_visited_cb = kwargs.pop('node_visited_cb')
-        super(MyTree, self).__init__(*args, **kwargs)
+        super(DevicesTree, self).__init__(*args, **kwargs)
 
     def change_focus(self, *args, **kwargs):
-        super(MyTree, self).change_focus(*args, **kwargs)
+        super(DevicesTree, self).change_focus(*args, **kwargs)
         _, node = self.get_focus()
         data = node.get_value()
         #print data
@@ -269,32 +287,38 @@ class MyTree(urwid.TreeListBox):
 class DeviceBox(urwid.LineBox):
     def __init__(self):
         self.lines = urwid.SimpleFocusListWalker([])
-        self.lines.append(urwid.Text(('dim', '<select device>')))
         self.lines_box = urwid.ListBox(self.lines)
-        super(DeviceBox, self).__init__(self.lines_box, '-')
+        super(DeviceBox, self).__init__(self.lines_box, 'Dev Box: [select device]')
         self.device = None
 
     def show_device(self, device):
         self.device = device
         text = []
-        if 'DEVNAME' in device and device['DEVNAME'] in input_devices:
-            data = input_devices[device['DEVNAME']]
-            if 'sdl2' in data:
-                text += present_sdl2_gamepad(data['sdl2'])
-            if 'evdev' in data:
-                text += present_evdev_gamepad(data['evdev'])
-            if 'pygame' in data:
-                text += present_pygame_gamepad(data['pygame'])
-            if 'jsio' in data:
-                text += present_jsio_gamepad(data['jsio'])
 
-        text.append(('emph', "UDEV:"))
-        for k in list(device.keys()):
-            text.append("   %s: %s" % (k, device[k]))
+        if device:
+            if 'DEVNAME' in device and device['DEVNAME'] in input_devices:
+                data = input_devices[device['DEVNAME']]
+                if 'sdl2' in data:
+                    text += present_sdl2_gamepad(data['sdl2'])
+                if 'evdev' in data:
+                    text += present_evdev_gamepad(data['evdev'])
+                if 'pygame' in data:
+                    text += present_pygame_gamepad(data['pygame'])
+                if 'jsio' in data:
+                    text += present_jsio_gamepad(data['jsio'])
 
-        self.lines[:] = [urwid.Text(t) for t in text]
+            text.append(('emph', "UDEV:"))
+            for k in list(device.keys()):
+                text.append("   %s: %s" % (k, device[k]))
 
-        self.set_title(device.sys_path)
+            self.set_title('Dev Box: ' + device.sys_path)
+        else:
+            self.set_title('Dev Box: [select device]')
+
+        elems = [urwid.Text(t) for t in text]
+        self.lines[:] = elems
+        if elems:
+            self.lines_box.focus_position = 0
 
     def make_focus(self):
         self.set_title(device.sys_path)
@@ -371,6 +395,64 @@ class Udev(object):
         self.observer.start()
 
 
+class GamePadStateBox(urwid.Text):
+    def __init__(self, *args, **kwargs):
+        super(GamePadStateBox, self).__init__(*args, **kwargs)
+        self.buttons = {}
+        self.axes = {}
+
+    def update_state(self, source, device, event):
+        if source == 'evdev':
+            self._update_evdev_state(device, event)
+        elif source == 'jsio':
+            self._update_jsio_state(device, event)
+
+    def _update_evdev_state(self, device, event):
+        buttons = [BUTTON_NAMES[k[1]] if k[0] == '?' else k[0] for k in device.active_keys(verbose=True)]
+        text = "Buttons: %s\n" % ", ".join(buttons)
+
+        if event.type == evdev.ecodes.EV_ABS:
+            self.axes[event.code] = event.value
+
+        caps = device.capabilities()
+        axes_caps = {}
+        for a, info in caps[evdev.ecodes.EV_ABS]:
+            axes_caps[a] = info
+
+        text += "Axes:\n"
+        for c, val in self.axes.items():
+            text += "  %s: %d/%d\n" % (evdev.ecodes.ABS[c][4:], val, axes_caps[c].max)
+
+        self.set_text(text)
+
+    def _update_jsio_state(self, device, event):
+        if event['type'] == JS_EVENT_BUTTON:
+            print("AAAAAAA " + str(event))
+            if event['value'] == 1:
+                self.buttons[event['number']] = event['value']
+            else:
+                if event['number'] in self.buttons:
+                    del self.buttons[event['number']]
+        buttons = [str(b) for b in self.buttons.keys()]
+        text = "Buttons: %s\n" % ", ".join(buttons)
+        self.set_text(text)
+
+
+class MyAsyncioEventLoop(urwid.AsyncioEventLoop):
+    def run(self):
+        """
+        Start the event loop.  Exit the loop when any callback raises
+        an exception.  If ExitMainLoop is raised, exit cleanly.
+        """
+        self._loop.set_exception_handler(self._exception_handler)
+        self._loop.run_forever()
+        if self._exc_info:
+            e = self._exc_info
+            self._exc_info = None
+            open('a.log', 'a').write(str(e)+'\n')
+            raise e[1]
+
+
 class ConsoleUI(object):
     palette = [
         ('body', 'black', 'light gray'),
@@ -386,58 +468,98 @@ class ConsoleUI(object):
         ('dim', 'light gray', 'black'),
         ]
 
-    footer_text = [
-        ('title', "Example Data Browser"), "    ",
-        ('key', "UP"), ",", ('key', "DOWN"), ",",
-        ('key', "PAGE UP"), ",", ('key', "PAGE DOWN"),
-        "  ",
+    footer_texts = [[
+        # focused devs tree
+        ('key', "TAB"), ":Change focused pane  ",
+        ('key', "DOWN"), ",",
+        ('key', "UP"), ",",
+        ('key', "PAGE UP"), ",",
+        ('key', "PAGE DOWN"), ",",
         ('key', "+"), ",",
-        ('key', "-"), "  ",
-        ('key', "LEFT"), "  ",
-        ('key', "HOME"), "  ",
-        ('key', "END"), "  ",
-        ('key', "Q"),
-        ]
-
+        ('key', "-"), ",",
+        ('key', "LEFT"), ",",
+        ('key', "HOME"), ",",
+        ('key', "END"), ":Navigate Devices Tree and select device  ",
+        ('key', "F1"), ":Help  ",
+        ('key', "F2"), ":Switch Log Box/GamePad State  ",
+        ('key', "Q"), ":Quit"
+    ], [
+        # focused dev box
+        ('key', "TAB"), ":Change focused pane  ",
+        ('key', "DOWN"), ",",
+        ('key', "UP"), ",",
+        ('key', "PAGE UP"), ",",
+        ('key', "PAGE DOWN"), ":Scroll Dev Box content  ",
+        ('key', "F1"), ":Help  ",
+        ('key', "F2"), ":Switch Log Box/GamePad State  ",
+        ('key', "Q"), ":Quit"
+    ], [
+        # focused log box
+        ('key', "TAB"), ":Change focused pane  ",
+        ('key', "DOWN"), ",",
+        ('key', "UP"), ",",
+        ('key', "PAGE UP"), ",",
+        ('key', "PAGE DOWN"), ":Scroll Log Box content  ",
+        ('key', "F1"), ":Help  ",
+        ('key', "F2"), ":Switch Log Box/GamePad State  ",
+        ('key', "Q"), ":Quit"
+    ]]
     def __init__(self):
         self.udev_queue = queue.Queue()
         self.udev = Udev(self.udev_queue)
 
-        self.focus_pane = 0
+        # log box
+        self.log_list = urwid.SimpleFocusListWalker([])
+        self.log_list.append(urwid.Text(('dim', '%s: event monitoring started' % datetime.datetime.now())))
+        self.log_box = urwid.ListBox(self.log_list)
+        self.log_box_wrap = urwid.AttrMap(urwid.LineBox(self.log_box, 'Log Box'), 'normal', 'focus')
 
-        self.header = urwid.Text( " -= GamePad Info =-" )
-        self.footer = urwid.AttrWrap( urwid.Text( self.footer_text ),
-            'foot')
-        self.log = urwid.SimpleFocusListWalker([])
-        self.log.append(urwid.Text(('dim', '%s: monitoring udev started' % datetime.datetime.now())))
-        self.log_box = urwid.ListBox(self.log)
-        self.log_box_wrap = urwid.AttrMap(urwid.LineBox(self.log_box, 'udev events'), 'normal', 'focus')
+        # gampad state box
+        self.gamepad_state_box = GamePadStateBox("-")
+        self.gamepad_state_box_wrap = urwid.AttrMap(urwid.LineBox(urwid.Filler(self.gamepad_state_box, valign='top'), 'GamePad State Box'), 'normal', 'focus')
 
+        # dev box
         self.dev_box = DeviceBox()
         self.dev_box_wrap = urwid.AttrMap(self.dev_box, 'normal', 'focus')
 
         self.cols = urwid.Columns([urwid.Filler(urwid.Text('placeholder')),
                                    self.dev_box_wrap])
+
+        # dev tree
         self.refresh_devs_tree()  # invoke after creating cols
+
+        self.bottom_elems = [self.log_box_wrap, self.gamepad_state_box_wrap]
+        self.bottom_elem_idx = 0
         self.pile = urwid.Pile([self.cols,
-                                self.log_box_wrap])
+                                self.bottom_elems[self.bottom_elem_idx]])
         self.view = urwid.Frame(
             self.pile,
-            header=urwid.AttrWrap(self.header, 'head' ),
-            footer=self.footer )
+            header=urwid.AttrWrap(urwid.Text(" -= GamePad Info =-"), 'head' ),
+            footer=urwid.AttrWrap(urwid.Text(self.footer_texts[0]), 'foot'))
 
         self.aloop = asyncio.get_event_loop()
-        evl = urwid.AsyncioEventLoop(loop=self.aloop)
+        evl = MyAsyncioEventLoop(loop=self.aloop)
         self.loop = urwid.MainLoop(self.view, self.palette, event_loop=evl,
                                    unhandled_input=self.unhandled_input)
 
+        self.focus_pane = 0
+        self.pile.focus_position = 0
+        self.cols.focus_position = 0
+
         self.ui_wakeup_fd = self.loop.watch_pipe(self.handle_udev_event)
         self.udev.setup_monitor(self.ui_wakeup_fd)
+
+        self.evdev_events_handler_task = None
+        self.jsio_events_handler_task = None
 
     def main(self):
         """Run the program."""
 
         self.loop.run()
+
+    def switch_bottom_elem(self):
+        self.bottom_elem_idx = 1 - self.bottom_elem_idx
+        self.pile.contents[1] = (self.bottom_elems[self.bottom_elem_idx], ('weight', 1))
 
     def unhandled_input(self, k):
         if k in ('q','Q'):
@@ -456,23 +578,30 @@ class ConsoleUI(object):
                 self.pile.focus_position = 0
                 self.cols.focus_position = 0
                 self.focus_pane = 0
+            self.view.footer = urwid.AttrWrap(urwid.Text(self.footer_texts[self.focus_pane]), 'foot')
+        elif k == 'f2':
+            self.switch_bottom_elem()
+
+    def log(self, text):
+        entry = '%s: %s' % (datetime.datetime.now(), text)
+        self.log_list.append(urwid.Text(entry))
+        self.log_box.focus_position = len(self.log_list) - 1
 
     def handle_udev_event(self, data):
         for _ in data:
             (action, device) = self.udev_queue.get(block=False)
-            entry = '%s: %8s - %s' % (datetime.datetime.now(), action, device.sys_path)
-            self.log.append(urwid.Text(entry))
-            self.log_box.focus_position = len(self.log) - 1
+            entry = '%8s - %s' % (action, device.sys_path)
+            self.log(entry)
 
         self.refresh_devs_tree()
 
     def refresh_devs_tree(self):
         devtree = self.udev.get_dev_tree()
 
-        self.topnode = ExampleParentNode(devtree)
-        self.listbox = MyTree(urwid.TreeWalker(self.topnode), node_visited_cb=self.node_visited)
+        self.topnode = DeviceParentNode(devtree)
+        self.listbox = DevicesTree(urwid.TreeWalker(self.topnode), node_visited_cb=self.node_visited)
         self.listbox.offset_rows = 1
-        self.devs_tree = urwid.LineBox(self.listbox, 'devices tree')
+        self.devs_tree = urwid.LineBox(self.listbox, 'Devices Tree')
         self.devs_tree_wrap = urwid.AttrMap(self.devs_tree, 'normal', 'focus')
 
         self.cols.contents[0] = (self.devs_tree_wrap, ('weight', 1, False))
@@ -489,19 +618,61 @@ class ConsoleUI(object):
         while True:
             events = await self.async_evdev_read(device)
             for event in events:
-                entry = '%s: %s' % (datetime.datetime.now(), str(event))
-                self.log.append(urwid.Text(entry))
-                self.log_box.focus_position = len(self.log) - 1
+                self.log(str(event))
+                self.gamepad_state_box.update_state('evdev', device, event)
+            if not self.evdev_events_handler_task:
+                break
+
+    def async_jsio_read(self, device):
+        future = asyncio.Future()
+        data_format = 'LhBB'
+        def ready():
+            self.aloop.remove_reader(device['file'].fileno())
+            events = []
+            while select.select([device['file'].fileno()], [], [], 0.0)[0]:
+                data = device['file'].read(struct.calcsize(data_format))
+                data = struct.unpack(data_format, data)
+                event = dict(time=data[0], value=data[1], type=data[2] & ~JS_EVENT_INIT, number=data[3])
+                events.append(event)
+            future.set_result(events)
+        self.aloop.add_reader(device['file'].fileno(), ready)
+        return future
+
+    async def handle_jsio_events(self, device):
+        device['file'] = open(device['path'], 'rb', os.O_RDONLY|os.O_NDELAY)
+        while True:
+            events = await self.async_jsio_read(device)
+            for event in events:
+                self.log('%s: %s ' % (device['path'], str(event)))
+                self.gamepad_state_box.update_state('jsio', device, event)
+            if not self.jsio_events_handler_task:
+                break
 
     def node_visited(self, device):
-        if not device:
-            return
         self.dev_box.show_device(device)
 
-        if 'DEVNAME' in device and device['DEVNAME'] in input_devices:
+        if self.evdev_events_handler_task:
+            self.log('stopped monitorig evdev %s' % self.selected_evdev_device)
+            self.evdev_events_handler_task.cancel()
+            self.aloop.remove_reader(self.selected_evdev_device.fileno())
+            self.evdev_events_handler_task = None
+
+        if self.jsio_events_handler_task:
+            self.log('stopped monitorig jsio %s' % self.selected_jsio_device)
+            self.jsio_events_handler_task.cancel()
+            self.aloop.remove_reader(self.selected_jsio_device['file'].fileno())
+            self.jsio_events_handler_task = None
+
+        if device and 'DEVNAME' in device and device['DEVNAME'] in input_devices:
             data = input_devices[device['DEVNAME']]
             if 'evdev' in data:
-                asyncio.ensure_future(self.handle_evdev_events(data['evdev']), loop=self.aloop)
+                self.selected_evdev_device = data['evdev']
+                self.log('started monitorig evdev %s' % self.selected_evdev_device)
+                self.evdev_events_handler_task = asyncio.ensure_future(self.handle_evdev_events(data['evdev']), loop=self.aloop)
+            elif 'jsio' in data:
+                self.selected_jsio_device = data['jsio']
+                self.log('started monitorig jsio %s' % self.selected_jsio_device['path'])
+                self.jsio_events_handler_task = asyncio.ensure_future(self.handle_jsio_events(data['jsio']), loop=self.aloop)
 
 
 def main():
