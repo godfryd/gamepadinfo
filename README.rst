@@ -30,8 +30,8 @@ Dependencies
 
 Dependencies can be installed on Ubuntu manually:
 
-$ sudo apt-get install python-urwid python-pyudev python-evdev
-python-sdl2
+$ sudo apt install python3-urwid python3-pyudev python3-evdev
+python3-sdl2
 
 If `gamepadinfo` is being installed via pip then dependencies will be installed automatically.
 
